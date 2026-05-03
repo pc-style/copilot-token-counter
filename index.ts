@@ -562,7 +562,7 @@ function renderModelTable(agg: Aggregate) {
   const note = agg.totals.premium > 0
     ? { text: `Premium-request cost: ${fmtCost(agg.totals.premiumCost)} (${agg.totals.premium.toFixed(2)} req @ ${fmtCost(PREMIUM_REQUEST_COST)})`, fg: C.warn }
     : undefined
-  renderTable(sectionModel, "PER-MODEL SUMMARY", headers, rows.length ? rows : [[
+  updateTableContent(sectionModel, headers, rows.length ? rows : [[
     { text: "(no data)", fg: C.dim }, ...Array(headers.length - 1).fill({ text: "" }),
   ]], rows.length ? footer : undefined, note)
 }
@@ -582,7 +582,7 @@ function renderProjectTable(agg: Aggregate) {
     { text: fmtTokens(v.output) },
     { text: fmtCost(v.cost) },
   ]))
-  renderTable(sectionProject, "PER-PROJECT BREAKDOWN", headers, rows.length ? rows : [[
+  updateTableContent(sectionProject, headers, rows.length ? rows : [[
     { text: "(no data)", fg: C.dim }, ...Array(headers.length - 1).fill({ text: "" }),
   ]])
 }
@@ -602,7 +602,7 @@ function renderDayTable(agg: Aggregate) {
     { text: fmtTokens(v.output) },
     { text: fmtCost(v.cost) },
   ]))
-  renderTable(sectionDay, "DAILY BREAKDOWN", headers, rows.length ? rows : [[
+  updateTableContent(sectionDay, headers, rows.length ? rows : [[
     { text: "(no data)", fg: C.dim }, ...Array(headers.length - 1).fill({ text: "" }),
   ]])
 }
@@ -626,12 +626,30 @@ function renderPricingTable(agg: Aggregate) {
       { text: "N/A" }, { text: "N/A" }, { text: "N/A" }, { text: "N/A" },
     ]
   })
-  renderTable(sectionPricing, "PRICING REFERENCE", headers,
+  updateTableContent(sectionPricing, headers,
     rows.length ? rows : [[{ text: "(no data)", fg: C.dim }, ...Array(headers.length - 1).fill({ text: "" })]],
     undefined,
     { text: "Estimated API-equivalent cost. Copilot subscriptions include token usage.", fg: C.dim },
   )
 }
+
+// Initialize table states (pre-allocate renderables)
+initTable(sectionModel, "PER-MODEL SUMMARY", [
+  { text: "Model" }, { text: "Calls" }, { text: "Input" }, { text: "Cached" },
+  { text: "Cache Wr" }, { text: "Output" }, { text: "Reason" }, { text: "Hit%" }, { text: "Cost" },
+], 50)
+initTable(sectionProject, "PER-PROJECT BREAKDOWN", [
+  { text: "Project" }, { text: "Sessions" }, { text: "Calls" },
+  { text: "Input" }, { text: "Cached" }, { text: "Output" }, { text: "Cost" },
+], 50)
+initTable(sectionDay, "DAILY BREAKDOWN", [
+  { text: "Date" }, { text: "Sessions" }, { text: "Calls" },
+  { text: "Input" }, { text: "Cached" }, { text: "Output" }, { text: "Cost" },
+], 50)
+initTable(sectionPricing, "PRICING REFERENCE", [
+  { text: "Model" }, { text: "Input/1M" }, { text: "Output/1M" },
+  { text: "Cache Rd/1M" }, { text: "Cache Wr/1M" },
+], 50)
 
 function render() {
   const agg = aggregate()
