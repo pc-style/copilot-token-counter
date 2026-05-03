@@ -366,18 +366,6 @@ root.add(footer)
 type Cell = { text: string; fg?: string; alignRight?: boolean }
 type Row  = Cell[]
 
-function clearChildren(box: BoxRenderable) {
-  // opentui exposes children removal by id
-  const ids: string[] = []
-  // @ts-ignore - private getChildren may not exist; iterate children via _children
-  const children: Renderable[] = (box as any).getChildren?.() ?? (box as any)._children ?? []
-  for (const c of children) ids.push((c as any).id)
-  for (const id of ids) box.remove(id)
-}
-
-let genCounter = 0
-function gid(prefix: string): string { return `${prefix}-${++genCounter}` }
-
 function padCell(text: string, width: number, alignRight: boolean): string {
   const len = text.length
   if (len >= width) return text
@@ -385,66 +373,142 @@ function padCell(text: string, width: number, alignRight: boolean): string {
   return alignRight ? pad + text : text + pad
 }
 
-function renderTable(box: BoxRenderable, title: string, headers: Cell[], rows: Row[], footerRow?: Row, note?: { text: string; fg?: string }) {
-  clearChildren(box)
+// ─── Pre-allocated table renderables ────────────────────────────────────────
+type TableState = {
+  lines: TextRenderable[]
+  lineIndex: number
+  widths: number[]
+  innerWidth: number
+  title: string
+  headers: Cell[]
+  rows: Row[]
+  footerRow?: Row
+  note?: { text: string; fg?: string }
+}
+
+const tables = new Map<BoxRenderable, TableState>()
+
+function initTable(box: BoxRenderable, title: string, headers: Cell[], maxRows: number = 50) {
+  // Clear previous children
+  const ids: string[] = []
+  const children: Renderable[] = (box as any).getChildren?.() ?? (box as any)._children ?? []
+  for (const c of children) ids.push((c as any).id)
+  for (const id of ids) box.remove(id)
+
+  const lines: TextRenderable[] = []
+  for (let i = 0; i < maxRows + 5; i++) {
+    const line = new TextRenderable(renderer, { id: `${box.id}-line-${i}`, content: "" })
+    box.add(line)
+    lines.push(line)
+  }
+
+  const state: TableState = {
+    lines,
+    lineIndex: 0,
+    widths: headers.map(() => 0),
+    innerWidth: 0,
+    title,
+    headers,
+    rows: [],
+    footerRow: undefined,
+    note: undefined,
+  }
+  tables.set(box, state)
+  return state
+}
+
+function updateTableContent(box: BoxRenderable, headers: Cell[], rows: Row[], footerRow?: Row, note?: { text: string; fg?: string }) {
+  let state = tables.get(box)
+  if (!state) {
+    const title = state?.title || "TABLE"
+    state = initTable(box, title, headers, Math.max(50, rows.length + 5))
+  }
+
+  state.headers = headers
+  state.rows = rows
+  state.footerRow = footerRow
+  state.note = note
+
   const all: Row[] = [headers, ...rows]
   if (footerRow) all.push(footerRow)
-  const widths = headers.map((_, i) => Math.max(...all.map(r => (r[i]?.text ?? "").length)))
-  const innerWidth = widths.reduce((a, b) => a + b, 0) + 2 * (widths.length - 1) + 4
+  state.widths = headers.map((_, i) => Math.max(...all.map(r => (r[i]?.text ?? "").length)))
+  state.innerWidth = state.widths.reduce((a, b) => a + b, 0) + 2 * (state.widths.length - 1) + 4
 
-  const titleStr = ` ${title} `
-  const topPad = innerWidth - titleStr.length - 1
-  box.add(new TextRenderable(renderer, {
-    id: gid("t-top"),
-    content: `┌─${titleStr}${"─".repeat(Math.max(0, topPad))}┐`,
-    fg: C.border,
-  }))
+  // Helper to pad content
+  function padContent(content: string): string {
+    const padding = Math.max(0, state!.innerWidth - content.length)
+    return content + " ".repeat(padding)
+  }
 
-  function rowText(row: Row, isHeader = false): TextRenderable {
-    const cells = row.map((c, i) => padCell(c.text, widths[i]!, c.alignRight ?? i > 0))
+  let li = 0
+
+  // Top border
+  const titleStr = ` ${state.title} `
+  const topPad = state.innerWidth - titleStr.length - 1
+  state.lines[li].content = `┌─${titleStr}${"─".repeat(Math.max(0, topPad))}┐`
+  state.lines[li].fg = C.border
+  state.lines[li].attributes = 0
+  li++
+
+  // Header row
+  const headerCells = headers.map((c, i) => padCell(c.text, state!.widths[i]!, c.alignRight ?? i > 0))
+  const headerContent = "  " + headerCells.join("  ")
+  state.lines[li].content = `│${padContent(headerContent)}│`
+  state.lines[li].fg = C.header
+  state.lines[li].attributes = 0b010
+  li++
+
+  // Header separator
+  const sepContent = "  " + state.widths.map(w => "─".repeat(w)).join("  ") + "  "
+  state.lines[li].content = `│${padContent(sepContent)}│`
+  state.lines[li].fg = C.dim
+  state.lines[li].attributes = 0
+  li++
+
+  // Data rows
+  for (const row of rows) {
+    const cells = row.map((c, i) => padCell(c.text, state!.widths[i]!, c.alignRight ?? i > 0))
     const content = "  " + cells.join("  ")
-    const padding = Math.max(0, innerWidth - content.length)
-    // We render the entire line in the dominant color of the row's first cell (kept simple).
-    const fg = isHeader ? C.header : (row[0]?.fg ?? C.text)
-    return new TextRenderable(renderer, {
-      id: gid("t-row"),
-      content: `│${content}${" ".repeat(padding)}│`,
-      fg,
-      attributes: isHeader ? 0b010 : 0,
-    })
+    state.lines[li].content = `│${padContent(content)}│`
+    state.lines[li].fg = row[0]?.fg ?? C.text
+    state.lines[li].attributes = 0
+    li++
   }
 
-  function sepText(): TextRenderable {
-    const content = "  " + widths.map(w => "─".repeat(w)).join("  ") + "  "
-    const padding = Math.max(0, innerWidth - content.length)
-    return new TextRenderable(renderer, {
-      id: gid("t-sep"),
-      content: `│${content}${" ".repeat(padding)}│`,
-      fg: C.dim,
-    })
-  }
-
-  box.add(rowText(headers, true))
-  box.add(sepText())
-  for (const r of rows) box.add(rowText(r))
+  // Footer separator (if footer exists)
   if (footerRow) {
-    box.add(sepText())
-    const tr = rowText(footerRow)
-    tr.fg = C.total
-    tr.attributes = 0b001
-    box.add(tr)
+    state.lines[li].content = `│${padContent(sepContent)}│`
+    state.lines[li].fg = C.dim
+    state.lines[li].attributes = 0
+    li++
+
+    // Footer row
+    const footerCells = footerRow.map((c, i) => padCell(c.text, state!.widths[i]!, c.alignRight ?? i > 0))
+    const footerContent = "  " + footerCells.join("  ")
+    state.lines[li].content = `│${padContent(footerContent)}│`
+    state.lines[li].fg = C.total
+    state.lines[li].attributes = 0b001
+    li++
   }
-  box.add(new TextRenderable(renderer, {
-    id: gid("t-bot"),
-    content: `└${"─".repeat(innerWidth)}┘`,
-    fg: C.border,
-  }))
+
+  // Bottom border
+  state.lines[li].content = `└${"─".repeat(state.innerWidth)}┘`
+  state.lines[li].fg = C.border
+  state.lines[li].attributes = 0
+  li++
+
+  // Note (if present)
   if (note) {
-    box.add(new TextRenderable(renderer, {
-      id: gid("t-note"),
-      content: `  ${note.text}`,
-      fg: note.fg ?? C.label,
-    }))
+    state.lines[li].content = `  ${note.text}`
+    state.lines[li].fg = note.fg ?? C.label
+    state.lines[li].attributes = 0
+    li++
+  }
+
+  // Clear remaining lines
+  while (li < state.lines.length) {
+    state.lines[li].content = ""
+    li++
   }
 }
 

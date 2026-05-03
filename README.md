@@ -2,6 +2,8 @@
 
 Minimal, realtime terminal token counter for GitHub Copilot CLI sessions. Built with [opentui](https://github.com/anomalyco/opentui) and Bun.
 
+![Token Counter TUI](./image.png)
+
 Tails `~/.copilot/session-state/*/events.jsonl` and aggregates `inputTokens` / `outputTokens` / `cacheReadTokens` / `reasoningTokens` from session metrics in real time.
 
 ## Install
