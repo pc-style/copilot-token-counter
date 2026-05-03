@@ -17,13 +17,14 @@ if ! command -v git >/dev/null 2>&1; then
   exit 1
 fi
 
-if [ -d "$DIR/.git" ]; then
-  echo ">> updating $DIR"
-  git -C "$DIR" pull --ff-only
-else
-  echo ">> cloning into $DIR"
-  git clone --depth 1 "$REPO" "$DIR"
+# Remove old installation to ensure clean update
+if [ -d "$DIR" ]; then
+  echo ">> removing old installation"
+  rm -rf "$DIR"
 fi
+
+echo ">> cloning into $DIR"
+git clone --depth 1 "$REPO" "$DIR"
 
 echo ">> installing dependencies"
 ( cd "$DIR" && bun install --silent )

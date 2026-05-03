@@ -366,8 +366,85 @@ root.add(footer)
 type Cell = { text: string; fg?: string; alignRight?: boolean }
 type Row  = Cell[]
 
-function padCell(text: string, width: number, alignRight: boolean): string {
-  const len = text.length
+// Visual width calculation (Unicode-aware, handles emoji VS16 and combining marks)
+function isEastAsianWide(cp: number): boolean {
+  // CJK Unified Ideographs
+  if (cp >= 0x4E00 && cp <= 0x9FFF) return true
+  // CJK Extension A
+  if (cp >= 0x3400 && cp <= 0x4DBF) return true
+  // CJK Extensions B-F
+  if (cp >= 0x20000 && cp <= 0x2FA1F) return true
+  // CJK Compatibility
+  if (cp >= 0xF900 && cp <= 0xFAFF) return true
+  // CJK Compatibility Forms
+  if (cp >= 0xFE30 && cp <= 0xFE4F) return true
+  // Hangul Syllables
+  if (cp >= 0xAC00 && cp <= 0xD7AF) return true
+  // Hangul Jamo
+  if (cp >= 0x1100 && cp <= 0x115F) return true
+  if (cp >= 0x2329 && cp <= 0x232A) return true
+  // Hangul Jamo Extended
+  if (cp >= 0xA960 && cp <= 0xA97F) return true
+  if (cp >= 0xD7B0 && cp <= 0xD7FF) return true
+  // Fullwidth Forms
+  if (cp >= 0xFF01 && cp <= 0xFF60) return true
+  if (cp >= 0xFFE0 && cp <= 0xFFE6) return true
+  // CJK Radicals, Symbols, Punctuation, Hiragana, Katakana
+  if (cp >= 0x2E80 && cp <= 0x303E) return true
+  if (cp >= 0x3040 && cp <= 0x31FF) return true
+  // Enclosed CJK, Compatibility, Bopomofo, Yi
+  if (cp >= 0x3200 && cp <= 0x4DCF) return true
+  // Emoji ranges
+  if (cp >= 0x1F300 && cp <= 0x1F9FF) return true
+  if (cp >= 0x1F600 && cp <= 0x1F64F) return true
+  if (cp >= 0x1F680 && cp <= 0x1F6FF) return true
+  if (cp >= 0x2600 && cp <= 0x26FF) return true
+  if (cp >= 0x2700 && cp <= 0x27BF) return true
+  return false
+}
+
+function isCombiningMark(cp: number): boolean {
+  if (cp >= 0x0300 && cp <= 0x036F) return true
+  if (cp >= 0x1AB0 && cp <= 0x1AFF) return true
+  if (cp >= 0x1DC0 && cp <= 0x1DFF) return true
+  if (cp >= 0x20D0 && cp <= 0x20FF) return true
+  if (cp >= 0xFE20 && cp <= 0xFE2F) return true
+  return false
+}
+
+function stringWidth(str: string): number {
+  const chars = Array.from(str)
+  let width = 0
+  let i = 0
+  while (i < chars.length) {
+    const ch = chars[i]
+    const cp = ch.codePointAt(0) ?? 0
+    // VS16 (emoji presentation selector) makes preceding char 2-wide
+    if (i + 1 < chars.length && chars[i + 1] === '\uFE0F') {
+      width += 2
+      i += 2
+      continue
+    }
+    // Skip combining marks (zero width)
+    if (isCombiningMark(cp)) {
+      i += 1
+      continue
+    }
+    // ANSI escape sequences (zero width)
+    if (cp === 0x001B) {
+      i += 1
+      while (i < chars.length && !chars[i].match(/[A-Za-z]/)) i++
+      i += 1
+      continue
+    }
+    width += isEastAsianWide(cp) ? 2 : 1
+    i += 1
+  }
+  return width
+}
+
+function padCell(text: string, width: number, alignRight: boolean = false): string {
+  const len = stringWidth(text)
   if (len >= width) return text
   const pad = " ".repeat(width - len)
   return alignRight ? pad + text : text + pad
@@ -388,22 +465,15 @@ type TableState = {
 
 const tables = new Map<BoxRenderable, TableState>()
 
-function initTable(box: BoxRenderable, title: string, headers: Cell[], maxRows: number = 50) {
+function initTable(box: BoxRenderable, title: string, headers: Cell[]) {
   // Clear previous children
   const ids: string[] = []
   const children: Renderable[] = (box as any).getChildren?.() ?? (box as any)._children ?? []
   for (const c of children) ids.push((c as any).id)
   for (const id of ids) box.remove(id)
 
-  const lines: TextRenderable[] = []
-  for (let i = 0; i < maxRows + 5; i++) {
-    const line = new TextRenderable(renderer, { id: `${box.id}-line-${i}`, content: "" })
-    box.add(line)
-    lines.push(line)
-  }
-
   const state: TableState = {
-    lines,
+    lines: [],
     lineIndex: 0,
     widths: headers.map(() => 0),
     innerWidth: 0,
@@ -420,8 +490,7 @@ function initTable(box: BoxRenderable, title: string, headers: Cell[], maxRows: 
 function updateTableContent(box: BoxRenderable, headers: Cell[], rows: Row[], footerRow?: Row, note?: { text: string; fg?: string }) {
   let state = tables.get(box)
   if (!state) {
-    const title = state?.title || "TABLE"
-    state = initTable(box, title, headers, Math.max(50, rows.length + 5))
+    state = initTable(box, "TABLE", headers)
   }
 
   state.headers = headers
@@ -431,20 +500,30 @@ function updateTableContent(box: BoxRenderable, headers: Cell[], rows: Row[], fo
 
   const all: Row[] = [headers, ...rows]
   if (footerRow) all.push(footerRow)
-  state.widths = headers.map((_, i) => Math.max(...all.map(r => (r[i]?.text ?? "").length)))
+  state.widths = headers.map((_, i) => Math.max(...all.map(r => stringWidth(r[i]?.text ?? ""))))
   state.innerWidth = state.widths.reduce((a, b) => a + b, 0) + 2 * (state.widths.length - 1) + 4
 
-  // Helper to pad content
+  // Ensure we have enough lines
+  const neededLines = 3 + rows.length + (footerRow ? 2 : 0) + 1 + (note ? 1 : 0)
+  while (state.lines.length < neededLines) {
+    const line = new TextRenderable(renderer, { id: `${box.id}-line-${state.lines.length}`, content: "" })
+    state.lines.push(line)
+    box.add(line)
+  }
+
+  // Helper to pad content (using visual width)
   function padContent(content: string): string {
-    const padding = Math.max(0, state!.innerWidth - content.length)
+    const contentWidth = stringWidth(content)
+    const padding = Math.max(0, state!.innerWidth - contentWidth)
     return content + " ".repeat(padding)
   }
 
   let li = 0
 
-  // Top border
+  // Top border with title
   const titleStr = ` ${state.title} `
-  const topPad = state.innerWidth - titleStr.length - 1
+  const titleStrWidth = stringWidth(titleStr)
+  const topPad = state.innerWidth - titleStrWidth - 1
   state.lines[li].content = `┌─${titleStr}${"─".repeat(Math.max(0, topPad))}┐`
   state.lines[li].fg = C.border
   state.lines[li].attributes = 0
@@ -515,9 +594,10 @@ function updateTableContent(box: BoxRenderable, headers: Cell[], rows: Row[], fo
 // ─── Render ────────────────────────────────────────────────────────────────
 function renderBanner(agg: Aggregate, fileCount: number) {
   const title = "COPILOT TOKEN USAGE & COST"
-  const inner = title.length + 10
-  const padL = Math.floor((inner - title.length) / 2)
-  const padR = inner - title.length - padL
+  const titleWidth = stringWidth(title)
+  const inner = titleWidth + 10
+  const padL = Math.floor((inner - titleWidth) / 2)
+  const padR = inner - titleWidth - padL
   bannerTop.content = `╔${"═".repeat(inner)}╗`
   bannerMid.content = `║${" ".repeat(padL)}${title}${" ".repeat(padR)}║`
   bannerBot.content = `╚${"═".repeat(inner)}╝`
@@ -637,19 +717,19 @@ function renderPricingTable(agg: Aggregate) {
 initTable(sectionModel, "PER-MODEL SUMMARY", [
   { text: "Model" }, { text: "Calls" }, { text: "Input" }, { text: "Cached" },
   { text: "Cache Wr" }, { text: "Output" }, { text: "Reason" }, { text: "Hit%" }, { text: "Cost" },
-], 50)
+])
 initTable(sectionProject, "PER-PROJECT BREAKDOWN", [
   { text: "Project" }, { text: "Sessions" }, { text: "Calls" },
   { text: "Input" }, { text: "Cached" }, { text: "Output" }, { text: "Cost" },
-], 50)
+])
 initTable(sectionDay, "DAILY BREAKDOWN", [
   { text: "Date" }, { text: "Sessions" }, { text: "Calls" },
   { text: "Input" }, { text: "Cached" }, { text: "Output" }, { text: "Cost" },
-], 50)
+])
 initTable(sectionPricing, "PRICING REFERENCE", [
   { text: "Model" }, { text: "Input/1M" }, { text: "Output/1M" },
   { text: "Cache Rd/1M" }, { text: "Cache Wr/1M" },
-], 50)
+])
 
 function render() {
   const agg = aggregate()
