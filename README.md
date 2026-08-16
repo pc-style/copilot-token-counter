@@ -2,7 +2,8 @@
 
 > [!IMPORTANT]
 > **Canonical repository.** This is the canonical home of the project. The later
-> [`pc-style/copilot-tokens`](https://github.com/pc-style/copilot-tokens) experiment is archived and retained for reference.
+> [`pc-style/copilot-tokens`](https://github.com/pc-style/copilot-tokens) experiment
+> is superseded and retained for reference.
 
 ## Problem and solution
 
@@ -58,13 +59,15 @@ will remain compatible.
 
 This repository was created on May 3, 2026. The separate
 [`pc-style/copilot-tokens`](https://github.com/pc-style/copilot-tokens) repository
-was created on May 4, 2026 as a later alternate implementation and is now archived.
+was created on May 4, 2026 as a later alternate implementation and is now
+superseded.
 
-The archived implementation regex-scans `~/.copilot/logs/process-*.log` and adds
+The superseded implementation regex-scans `~/.copilot/logs/process-*.log` and adds
 custom log/session paths, a configurable refresh interval, recent-call output,
 section visibility settings, and parser tests. Those features remain available in
 its history but were not copied here: this implementation deliberately keeps its
-structured `events.jsonl` parser and OpenTUI interface. The archived README credits
+structured `events.jsonl` parser and OpenTUI interface. That repository's README
+credits
 [ekroon's Copilot token cost gist](https://gist.github.com/ekroon/424b81ebca907b5e5de3ce07a649da5e)
 for that implementation's log-parsing approach.
 
