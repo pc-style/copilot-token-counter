@@ -2,7 +2,7 @@ import {
   createCliRenderer,
   TextRenderable,
   BoxRenderable,
-  type Renderable,
+  type BaseRenderable,
 } from "@opentui/core"
 import { readdirSync, statSync, watch, type FSWatcher, readFileSync } from "node:fs"
 import { open } from "node:fs/promises"
@@ -467,10 +467,8 @@ const tables = new Map<BoxRenderable, TableState>()
 
 function initTable(box: BoxRenderable, title: string, headers: Cell[]) {
   // Clear previous children
-  const ids: string[] = []
-  const children: Renderable[] = (box as any).getChildren?.() ?? (box as any)._children ?? []
-  for (const c of children) ids.push((c as any).id)
-  for (const id of ids) box.remove(id)
+  const children: BaseRenderable[] = (box as any).getChildren?.() ?? (box as any)._children ?? []
+  for (const child of children) box.remove(child)
 
   const state: TableState = {
     lines: [],
